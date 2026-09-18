@@ -15,17 +15,29 @@ HEART_PYTHON = r"C:\ProgramData\anaconda3\envs\heart\python.exe"
 
 def _ensure_streamlit_runner():
     """Ensure app is executed via 'streamlit run' in the 'heart' conda environment."""
+    if os.environ.get("STREAMLIT_RUNNING_APP") == "1":
+        return
+
     try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        if get_script_run_ctx() is not None:
+        import streamlit.runtime as rt
+        if rt.exists():
             return  # Successfully running inside Streamlit runner!
+    except Exception:
+        pass
+
+    try:
+        from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
+        if get_script_run_ctx() is not None:
+            return
     except Exception:
         pass
 
     python_exe = HEART_PYTHON if os.path.exists(HEART_PYTHON) else sys.executable
     print(f"[*] Starting Multi-Query RAG in 'heart' environment: {python_exe} -m streamlit run {__file__}")
     cmd = [python_exe, "-m", "streamlit", "run", os.path.abspath(__file__)] + sys.argv[1:]
-    sys.exit(subprocess.call(cmd))
+    env = os.environ.copy()
+    env["STREAMLIT_RUNNING_APP"] = "1"
+    sys.exit(subprocess.call(cmd, env=env))
 
 _ensure_streamlit_runner()
 
