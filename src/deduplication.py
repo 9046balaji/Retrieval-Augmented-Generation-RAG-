@@ -6,7 +6,7 @@ crucial for viva demonstration.
 """
 
 from collections import defaultdict
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from src.config import DEFAULT_RRF_K, DEFAULT_FINAL_TOP_K
 
 
@@ -20,7 +20,8 @@ class ResultFusionDeduplicator:
         self,
         results_by_query: Dict[str, List[Dict[str, Any]]],
         final_top_k: int = DEFAULT_FINAL_TOP_K,
-        fusion_strategy: str = "rrf"
+        fusion_strategy: str = "rrf",
+        rrf_k: Optional[int] = None
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Fuse and deduplicate document lists retrieved across multiple queries.
 
@@ -66,7 +67,8 @@ class ResultFusionDeduplicator:
                 query_appearances[did].append(appearance)
 
                 # Update RRF: RRF(d) = sum(1 / (k + rank))
-                rrf_scores[did] += 1.0 / (self.rrf_k + rank)
+                k_val = rrf_k if rrf_k is not None else self.rrf_k
+                rrf_scores[did] += 1.0 / (k_val + rank)
 
                 # Update score aggregations
                 score_sums[did] += doc.get("score", 0.0)

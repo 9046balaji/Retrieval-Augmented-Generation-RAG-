@@ -90,6 +90,10 @@ class MultiQueryRAGSystem:
         top_k_per_query: int = DEFAULT_TOP_K_PER_QUERY,
         final_top_k: int = DEFAULT_FINAL_TOP_K,
         fusion_strategy: str = "rrf",
+        rrf_k: int = DEFAULT_RRF_K,
+        temperature: Optional[float] = None,
+        num_ctx: Optional[int] = None,
+        require_citations: bool = True,
         generate_answer: bool = True
     ) -> Dict[str, Any]:
         """Execute the proposed Multi-Query RAG pipeline.
@@ -122,14 +126,21 @@ class MultiQueryRAGSystem:
         fused_contexts, redundancy_metrics = self.deduplicator.fuse_and_deduplicate(
             results_by_query=results_by_query,
             final_top_k=final_top_k,
-            fusion_strategy=fusion_strategy
+            fusion_strategy=fusion_strategy,
+            rrf_k=rrf_k
         )
         fusion_time = time.time() - fusion_start
 
         # Step 4: Grounded Answer Synthesis
         answer_dict = {}
         if generate_answer:
-            answer_dict = self.answer_generator.generate_answer(user_query, fused_contexts)
+            answer_dict = self.answer_generator.generate_answer(
+                question=user_query,
+                contexts=fused_contexts,
+                temperature=temperature,
+                num_ctx=num_ctx,
+                require_citations=require_citations
+            )
 
         total_time = time.time() - start_time
 

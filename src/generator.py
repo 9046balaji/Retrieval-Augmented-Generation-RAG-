@@ -7,7 +7,7 @@ deduplicated context passages with bracketed citations.
 import re
 import time
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import ollama
 
 from src.config import OLLAMA_MODEL, OLLAMA_NUM_CTX, GROUNDED_GEN_TEMPERATURE
@@ -24,7 +24,10 @@ class GroundedAnswerGenerator:
     def generate_answer(
         self,
         question: str,
-        contexts: List[Dict[str, Any]]
+        contexts: List[Dict[str, Any]],
+        temperature: Optional[float] = None,
+        num_ctx: Optional[int] = None,
+        require_citations: bool = True
     ) -> Dict[str, Any]:
         """Generate a grounded answer for the question using the provided context passages.
 
@@ -57,11 +60,12 @@ class GroundedAnswerGenerator:
 
         context_str = "\n\n".join(context_blocks)
 
+        citation_rule = "2. Every factual claim or finding you write MUST be immediately followed by its source citation: [Document <id>].\n" if require_citations else "2. Cite supporting documents [Document <id>] when available.\n"
         prompt = (
             f"You are an evidence-grounded scientific research assistant. Your task is to answer the user question based EXCLUSIVELY on the provided literature below.\n\n"
             f"STRICT GROUNDING RULES:\n"
             f"1. Rely ONLY on the facts stated in the provided documents. Do NOT answer from your internal pre-training memory or make assumptions.\n"
-            f"2. Every factual claim or finding you write MUST be immediately followed by its source citation: [Document <id>].\n"
+            f"{citation_rule}"
             f"3. If the provided literature does not contain information to answer the question, state: \"The retrieved literature does not contain evidence to answer this question.\" Do not attempt to guess or use outside memory.\n"
             f"4. Integrate complementary details across the multiple retrieved documents into a coherent answer.\n\n"
             f"Provided Scientific Literature:\n"
@@ -73,13 +77,15 @@ class GroundedAnswerGenerator:
         )
 
         start_time = time.time()
+        eff_temp = temperature if temperature is not None else GROUNDED_GEN_TEMPERATURE
+        eff_ctx = num_ctx if num_ctx is not None else OLLAMA_NUM_CTX
         try:
             res = ollama.chat(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
                 options={
-                    "num_ctx": OLLAMA_NUM_CTX,
-                    "temperature": GROUNDED_GEN_TEMPERATURE
+                    "num_ctx": eff_ctx,
+                    "temperature": eff_temp
                 }
             )
             raw_answer = res["message"]["content"]
