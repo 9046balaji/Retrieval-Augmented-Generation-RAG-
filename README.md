@@ -30,44 +30,6 @@ This diagram displays the end-to-end multi-query architecture matching the horiz
 
 ![RAG Architecture](docs/images/1_rag_architecture.svg)
 
-```mermaid
-flowchart LR
-    %% Subgraphs matching horizontal architecture design
-    subgraph Indexing ["📁 Indexing Pipeline"]
-        direction LR
-        D["📄 Documents<br><i>(5,183 SciFact)</i>"] -->|Chunking| C["📑 Chunks<br><i>(Passages)</i>"]
-        C -->|Vectorize| E1["🧠 Embedding Model<br><i>(bge-base-en-v1.5)</i>"]
-        E1 --> V1["{...} Vectors<br><i>(768-dim)</i>"]
-        V1 -->|Indexing| VDB[("🗄️ Vector Database<br><i>ChromaDB (HNSW Cosine)</i>")]
-    end
-
-    subgraph QueryFlow ["🔍 Multi-Query Search"]
-        direction LR
-        U["👤 User"] --> Q["❓ Query"]
-        Q -->|Expand| MQ["🔀 Multi-Query (MedGemma)<br><i>(4 Search Angles)</i>"]
-        MQ -->|Vectorize| V2["{...} 4x Vectors"]
-        V2 -->|Search| VDB
-    end
-
-    subgraph AugGen ["⚡ Augment & Generate"]
-        direction LR
-        VDB -->|Retrieve| AUG["📦 Augment &amp; Fuse<br><i>(RRF k=60 + Dedup)</i>"]
-        AUG -->|Context| LLM["🤖 LLM<br><i>(MedGemma 1.5 4B)</i>"]
-        LLM -->|Generate| R["📝 Response<br><i>(Cited Answer)</i>"]
-        R -->|Deliver| U
-    end
-
-    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
-    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
-    classDef storeCard fill:#ffffff,stroke:#cbd5e1,stroke-width:2px,color:#0f172a,font-weight:bold;
-    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
-
-    class U,Q userCard;
-    class MQ,V2,AUG blueCard;
-    class VDB storeCard;
-    class D,C,E1,V1,LLM,R neutralCard;
-```
-
 ---
 
 ### Diagram 2: Multi-Query RAG Flow
@@ -75,62 +37,12 @@ This diagram details the step-by-step query decomposition, parallel ChromaDB ret
 
 ![Multi-Query RAG Flow](docs/images/2_multi_query_flow.svg)
 
-```mermaid
-flowchart LR
-    direction LR
-    Q0["👤 User Question"] -->|Decompose| MQ["🔀 MedGemma Expansion<br><i>(Q1, Q2, Q3, Q4)</i>"]
-    MQ -->|Vectorize| EMB["🧠 BGE Embedding"]
-    EMB -->|Parallel Search| CDB[("🗄️ ChromaDB<br><i>(Top-5 × 4 = 20 docs)</i>")]
-    CDB -->|Pool| RRF["⚡ RRF Fusion &amp; Dedup<br><i>(Consensus Boost, 30% pruned)</i>"]
-    RRF -->|Top-5 Unique| CTX["📋 Evidence Context Prompt<br><i>(Zero guessing bound)</i>"]
-    CTX -->|Generate| GEN["🤖 MedGemma 1.5 4B"]
-    GEN --> ANS["✅ Verified Cited Answer<br><i>[Document ID]</i>"]
-    ANS --> JUDGE["⚖️ LLM Judge<br><i>(Faithfulness 5.0/5.0)</i>"]
-
-    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
-    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
-    classDef greenCard fill:#f0fdf4,stroke:#86efac,stroke-width:1.5px,color:#15803d;
-    classDef purpleCard fill:#faf5ff,stroke:#c084fc,stroke-width:1.5px,color:#7e22ce;
-    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
-
-    class Q0,ANS userCard;
-    class MQ,CTX blueCard;
-    class RRF greenCard;
-    class JUDGE purpleCard;
-    class EMB,CDB,GEN neutralCard;
-```
-
 ---
 
 ### Diagram 3: User Flow & Interaction
 This diagram illustrates the user journey through the Chatbot application, from query submission and hyperparameter tuning to citation verification and source inspection:
 
 ![User Flow & Interaction](docs/images/3_user_flow.svg)
-
-```mermaid
-flowchart LR
-    direction LR
-    U1["👤 User on Chatbot"] -->|1. Types Question &amp; Sets Top-K| UI["🖥️ Streamlit Chat Interface"]
-    UI -->|2. Expand Query| MQ["🔀 Multi-Query Generator<br><i>(4 Search Angles)</i>"]
-    MQ -->|3. Concurrent Search| CHR[("🗄️ ChromaDB Vector Store")]
-    CHR -->|4. 20 Candidates| FUS["⚡ RRF Fusion &amp; Deduplication<br><i>(Top-5 Unique Kept)</i>"]
-    FUS -->|5. Bounded Evidence| LLM["🤖 Grounded Answer Generator<br><i>(MedGemma 1.5 4B)</i>"]
-    LLM -->|6. Verify Grounding| JDG["⚖️ LLM-as-a-Judge<br><i>(Faithfulness: 5.0/5.0)</i>"]
-    JDG -->|7. Display Message| RES["💬 Assistant Chat Bubble<br><i>(Answer + Sources Expander)</i>"]
-    RES -->|Delivered| U1
-
-    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
-    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
-    classDef greenCard fill:#f0fdf4,stroke:#86efac,stroke-width:1.5px,color:#15803d;
-    classDef purpleCard fill:#faf5ff,stroke:#c084fc,stroke-width:1.5px,color:#7e22ce;
-    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
-
-    class U1,RES userCard;
-    class UI,MQ blueCard;
-    class FUS greenCard;
-    class JDG purpleCard;
-    class CHR,LLM neutralCard;
-```
 
 ---
 
