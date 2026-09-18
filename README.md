@@ -26,126 +26,110 @@ Instead of searching only once, our system:
 ## 2. System Architecture Diagrams
 
 ### Diagram 1: Full System Architecture
-This diagram shows how all the components—the Chatbot UI, Ollama LLM, ChromaDB vector store, and offline embedding model—connect together.
+This diagram displays the end-to-end multi-query architecture matching the horizontal pipeline design (Indexing, Multi-Query Vector Search, and Context Augmentation & Generation):
+
+![RAG Architecture](docs/images/1_rag_architecture.svg)
 
 ```mermaid
-graph TD
-    subgraph Frontend["🖥️ User Interface"]
-        UI["Streamlit Chatbot UI<br><i>(Chat conversation, Parameter sliders, Source expander)</i>"]
+flowchart LR
+    %% Subgraphs matching horizontal architecture design
+    subgraph Indexing ["📁 Indexing Pipeline"]
+        direction LR
+        D["📄 Documents<br><i>(5,183 SciFact)</i>"] -->|Chunking| C["📑 Chunks<br><i>(Passages)</i>"]
+        C -->|Vectorize| E1["🧠 Embedding Model<br><i>(bge-base-en-v1.5)</i>"]
+        E1 --> V1["{...} Vectors<br><i>(768-dim)</i>"]
+        V1 -->|Indexing| VDB[("🗄️ Vector Database<br><i>ChromaDB (HNSW Cosine)</i>")]
     end
 
-    subgraph BackendEngine["⚙️ Multi-Query RAG Pipeline"]
-        Pipeline["RAG Pipeline Coordinator<br><i>(src/pipeline.py)</i>"]
-        QGen["Query Transformation Engine<br><i>(src/query_generator.py)</i>"]
-        Fusion["RRF Fusion & Deduplication<br><i>(src/deduplication.py)</i>"]
-        Gen["Grounded Generator<br><i>(src/generator.py)</i>"]
-        Judge["LLM-as-a-Judge Engine<br><i>(src/judge.py)</i>"]
+    subgraph QueryFlow ["🔍 Multi-Query Search"]
+        direction LR
+        U["👤 User"] --> Q["❓ Query"]
+        Q -->|Expand| MQ["🔀 Multi-Query (MedGemma)<br><i>(4 Search Angles)</i>"]
+        MQ -->|Vectorize| V2["{...} 4x Vectors"]
+        V2 -->|Search| VDB
     end
 
-    subgraph Storage["💾 Storage & Models"]
-        Chroma["ChromaDB Vector Database<br><i>(5,183 SciFact Papers, HNSW Cosine Index)</i>"]
-        BGE["BAAI/bge-base-en-v1.5<br><i>(768-dim Offline Embedding Model)</i>"]
-        Ollama["Ollama Local Server<br><i>(MedGemma 1.5 4B IT, 16k Context Window)</i>"]
+    subgraph AugGen ["⚡ Augment & Generate"]
+        direction LR
+        VDB -->|Retrieve| AUG["📦 Augment &amp; Fuse<br><i>(RRF k=60 + Dedup)</i>"]
+        AUG -->|Context| LLM["🤖 LLM<br><i>(MedGemma 1.5 4B)</i>"]
+        LLM -->|Generate| R["📝 Response<br><i>(Cited Answer)</i>"]
+        R -->|Deliver| U
     end
 
-    UI -->|"User query & parameters (N, K, rrf_k)"| Pipeline
-    Pipeline -->|"1. Generate query angles"| QGen
-    QGen <-->|"Prompt & receive 4 queries"| Ollama
-    Pipeline -->|"2. Encode queries"| BGE
-    Pipeline -->|"3. Vector search across all queries"| Chroma
-    Pipeline -->|"4. Merge & filter candidates"| Fusion
-    Pipeline -->|"5. Generate cited answer"| Gen
-    Gen <-->|"Prompt with retrieved passages"| Ollama
-    Pipeline -->|"6. Score faithfulness (Optional)"| Judge
-    Judge <-->|"Evaluate groundedness"| Ollama
-    Pipeline -->|"Final answer + citations + metrics"| UI
+    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
+    classDef storeCard fill:#ffffff,stroke:#cbd5e1,stroke-width:2px,color:#0f172a,font-weight:bold;
+    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
+
+    class U,Q userCard;
+    class MQ,V2,AUG blueCard;
+    class VDB storeCard;
+    class D,C,E1,V1,LLM,R neutralCard;
 ```
 
 ---
 
 ### Diagram 2: Multi-Query RAG Flow
-This diagram details the step-by-step mathematical and data flow from your initial question to the final answer.
+This diagram details the step-by-step query decomposition, parallel ChromaDB retrieval, Reciprocal Rank Fusion, and strict evidence-grounded generation:
+
+![Multi-Query RAG Flow](docs/images/2_multi_query_flow.svg)
 
 ```mermaid
-flowchart TD
-    UserQ["👤 User Asks Question<br><i>'How does microRNA dysregulation influence tumor metastasis?'</i>"]
-    
-    subgraph Step1["Step 1: Query Transformation (MedGemma)"]
-        UserQ --> LLMQ["MedGemma decomposes into 4 search angles:"]
-        LLMQ --> Q1["Q1: microRNA dysregulation in tumor metastasis"]
-        LLMQ --> Q2["Q2: microRNA regulation mechanisms"]
-        LLMQ --> Q3["Q3: epithelial-mesenchymal transition EMT invasion"]
-        LLMQ --> Q4["Q4: miR-21 miR-155 miR-200 target genes"]
-    end
+flowchart LR
+    direction LR
+    Q0["👤 User Question"] -->|Decompose| MQ["🔀 MedGemma Expansion<br><i>(Q1, Q2, Q3, Q4)</i>"]
+    MQ -->|Vectorize| EMB["🧠 BGE Embedding"]
+    EMB -->|Parallel Search| CDB[("🗄️ ChromaDB<br><i>(Top-5 × 4 = 20 docs)</i>")]
+    CDB -->|Pool| RRF["⚡ RRF Fusion &amp; Dedup<br><i>(Consensus Boost, 30% pruned)</i>"]
+    RRF -->|Top-5 Unique| CTX["📋 Evidence Context Prompt<br><i>(Zero guessing bound)</i>"]
+    CTX -->|Generate| GEN["🤖 MedGemma 1.5 4B"]
+    GEN --> ANS["✅ Verified Cited Answer<br><i>[Document ID]</i>"]
+    ANS --> JUDGE["⚖️ LLM Judge<br><i>(Faithfulness 5.0/5.0)</i>"]
 
-    subgraph Step2["Step 2: Vector Embedding & Dense Retrieval"]
-        Q1 & Q2 & Q3 & Q4 --> Embed["BGE-base-en-v1.5<br><i>(Add instruction prefix & normalize to 768-dim)</i>"]
-        Embed --> ChromaSearch["ChromaDB HNSW Cosine Search<br><i>Retrieve Top-5 per query branch</i>"]
-        ChromaSearch --> Pool["Candidate Pool<br><i>4 queries × 5 = 20 total retrieved passages</i>"]
-    end
+    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
+    classDef greenCard fill:#f0fdf4,stroke:#86efac,stroke-width:1.5px,color:#15803d;
+    classDef purpleCard fill:#faf5ff,stroke:#c084fc,stroke-width:1.5px,color:#7e22ce;
+    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
 
-    subgraph Step3["Step 3: Reciprocal Rank Fusion & Deduplication"]
-        Pool --> RRF["Reciprocal Rank Fusion Formula:<br><b>RRF(d) = Σ 1 / (60 + rank_q(d))</b>"]
-        RRF --> Dedup["Deduplication Engine:<br>• Remove redundant documents (25% - 40% duplicate rate)<br>• Consensus documents get highest ranks"]
-        Dedup --> TopDocs["Top-5 Final Unique Passages Selected"]
-    end
-
-    subgraph Step4["Step 4: Strict Evidence-Grounded Generation"]
-        TopDocs --> Prompt["Strict Context Bounding Prompt:<br>• Rely ONLY on provided documents<br>• Cite every fact with [Document id]<br>• Refuse to guess from memory if context lacks answer"]
-        Prompt --> MedGemma["MedGemma 1.5 4B Generation"]
-        MedGemma --> FinalAnswer["Final Answer with Verified Citations<br><i>[Document 25523969], [Document 2619579]...</i>"]
-    end
-
-    subgraph Step5["Step 5: LLM-as-a-Judge Evaluation"]
-        FinalAnswer --> JudgeModel["LLM-as-a-Judge Evaluation:"]
-        JudgeModel --> S1["Faithfulness / Groundedness: 5.0 / 5.0"]
-        JudgeModel --> S2["Context Utilization: High"]
-        JudgeModel --> S3["Answer Relevance: High"]
-    end
+    class Q0,ANS userCard;
+    class MQ,CTX blueCard;
+    class RRF greenCard;
+    class JUDGE purpleCard;
+    class EMB,CDB,GEN neutralCard;
 ```
 
 ---
 
 ### Diagram 3: User Flow & Interaction
-This diagram shows what happens when a user interacts with the Chatbot application.
+This diagram illustrates the user journey through the Chatbot application, from query submission and hyperparameter tuning to citation verification and source inspection:
+
+![User Flow & Interaction](docs/images/3_user_flow.svg)
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 👤 User
-    participant UI as 🖥️ Streamlit Chatbot
-    participant Pipe as ⚙️ Pipeline
-    participant DB as 🗄️ ChromaDB
-    participant LLM as 🧠 MedGemma (Ollama)
+flowchart LR
+    direction LR
+    U1["👤 User on Chatbot"] -->|1. Types Question &amp; Sets Top-K| UI["🖥️ Streamlit Chat Interface"]
+    UI -->|2. Expand Query| MQ["🔀 Multi-Query Generator<br><i>(4 Search Angles)</i>"]
+    MQ -->|3. Concurrent Search| CHR[("🗄️ ChromaDB Vector Store")]
+    CHR -->|4. 20 Candidates| FUS["⚡ RRF Fusion &amp; Deduplication<br><i>(Top-5 Unique Kept)</i>"]
+    FUS -->|5. Bounded Evidence| LLM["🤖 Grounded Answer Generator<br><i>(MedGemma 1.5 4B)</i>"]
+    LLM -->|6. Verify Grounding| JDG["⚖️ LLM-as-a-Judge<br><i>(Faithfulness: 5.0/5.0)</i>"]
+    JDG -->|7. Display Message| RES["💬 Assistant Chat Bubble<br><i>(Answer + Sources Expander)</i>"]
+    RES -->|Delivered| U1
 
-    User->>UI: Adjust settings (Top-K=5, Queries=4, RRF k=60)
-    User->>UI: Types question: "How does microRNA affect cancer metastasis?"
-    UI->>Pipe: Execute Multi-Query RAG
-    
-    Note over Pipe,LLM: Step 1: Query Expansion
-    Pipe->>LLM: Generate 4 orthogonal search angles
-    LLM-->>Pipe: Returns Q1, Q2, Q3, Q4
+    classDef userCard fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#ffffff,font-weight:bold;
+    classDef blueCard fill:#e0f2fe,stroke:#38bdf8,stroke-width:1.5px,color:#0369a1;
+    classDef greenCard fill:#f0fdf4,stroke:#86efac,stroke-width:1.5px,color:#15803d;
+    classDef purpleCard fill:#faf5ff,stroke:#c084fc,stroke-width:1.5px,color:#7e22ce;
+    classDef neutralCard fill:#f8fafc,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
 
-    Note over Pipe,DB: Step 2: Parallel Retrieval
-    Pipe->>DB: Query ChromaDB for all 4 queries simultaneously
-    DB-->>Pipe: Returns 20 candidates
-
-    Note over Pipe: Step 3: RRF Fusion & Deduplication
-    Pipe->>Pipe: Apply RRF(k=60), boost consensus, remove duplicates (15 unique kept)
-
-    Note over Pipe,LLM: Step 4: Grounded Synthesis
-    Pipe->>LLM: Generate answer using ONLY top 5 passages with citations
-    LLM-->>Pipe: Grounded text + citations: [Document 25523969]
-
-    opt If Judge Evaluation is Enabled
-        Pipe->>LLM: Grade answer faithfulness (1 to 5)
-        LLM-->>Pipe: Faithfulness: 5/5, Verdict: Verified
-    end
-
-    Pipe-->>UI: Deliver response package
-    UI-->>User: Display Assistant Bubble with Answer & Citations
-    User->>UI: Click "🔍 Multi-Query Insights & Retrieved Sources"
-    UI-->>User: Expands generated queries, redundancy stats, & source passages
+    class U1,RES userCard;
+    class UI,MQ blueCard;
+    class FUS greenCard;
+    class JDG purpleCard;
+    class CHR,LLM neutralCard;
 ```
 
 ---
